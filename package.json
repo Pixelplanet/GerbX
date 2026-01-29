@@ -1,0 +1,43 @@
+{
+  "name": "gerbx",
+  "version": "1.4.2",
+  "description": "",
+  "main": "xcs-generator.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test:e2e": "playwright test",
+    "docker:local": "docker-compose up --build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@tailwindcss/postcss": "^4.1.18",
+    "@types/node": "^25.0.10",
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react-swc": "^4.2.2",
+    "autoprefixer": "^10.4.23",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.90.20",
+    "@tanstack/react-router": "^1.157.16",
+    "@xmldom/xmldom": "^0.8.11",
+    "clipper-lib": "^6.4.2",
+    "gerber-to-svg": "^4.2.8",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.563.0",
+    "paper": "^0.12.18",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "vite-plugin-node-polyfills": "^0.25.0"
+  }
+}
