@@ -1,0 +1,27 @@
+/* Navbar */
+.navbar .gerber {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: rgb(229 115 69);
+  margin-left: 5px;
+}
+.navbar .two {
+  font-size: 2rem;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.473);
+  letter-spacing: 2px;
+  /* margin-left: 4px; */
+}
+.navbar .png {
+  font-size: 1.7rem;
+  font-weight: 700;
+  color: rgb(206, 94, 49);
+}
+.navbar a {
+  text-decoration: none;
+  color: rgb(4, 95, 122);
+  transition: 0.5s ease;
+}
+.navbar a:hover {
+  color: rgba(10, 107, 78, 0.616);
+}

@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-bg: #0a0a0c;
+  --color-brand-surface: rgba(20, 20, 25, 0.7);
+  --color-brand-accent: #3b82f6;
+  --color-brand-accent-glow: rgba(59, 130, 246, 0.3);
+  --color-brand-border: rgba(255, 255, 255, 0.1);
+  --color-brand-text: #f8fafc;
+  --color-brand-text-muted: #94a3b8;
+
+  --backdrop-blur-glass: 20px;
+}
+
+@layer base {
+  body {
+    @apply bg-brand-bg text-brand-text antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-brand-surface backdrop-blur-glass border border-brand-border rounded-2xl;
+  }
+
+  .btn-premium {
+    @apply px-4 py-2 bg-brand-accent text-white font-semibold rounded-lg shadow-lg shadow-brand-accent-glow hover:bg-blue-600 transition-all active:scale-95;
+  }
+
+  .sidebar-item {
+    @apply flex items-center gap-3 p-3 rounded-xl border border-transparent transition-all cursor-pointer;
+  }
+
+  .sidebar-item-active {
+    @apply bg-brand-accent-glow border-brand-accent;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-brand-bg;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-white/10 rounded-full hover:bg-white/20;
+}
+
+/* Custom Grid Pattern for Stage */
+.bg-grid-pattern {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Gerber Layer Rendering and Masking */
+/* Note: Do NOT force fill/stroke on gerber-fragment-container children!
+   The gerber-to-svg library outputs SVG with specific fill/stroke attributes
+   that define the actual geometry. Overriding them destroys the detail.
+   If you need to colorize, use CSS filters or SVG color-profile instead. */
+
+.mask-force-black * {
+  fill: black !important;
+  stroke: black !important;
+}
+
+.mask-force-white * {
+  fill: white !important;
+  stroke: white !important;
+}
+
+.non-scaling {
+  vector-effect: non-scaling-stroke;
+}
