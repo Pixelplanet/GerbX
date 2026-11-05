@@ -160,7 +160,7 @@ const LAYER_STYLES = {
 
 // Translucent colours for the other side's layers when it is ghosted over the current view.
 const GHOST_STYLES = {
-    copper: { color: '#22d3ee', opacity: 0.6 },
+    copper: { color: '#22d3ee', opacity: 0.4 },
     silkscreen: { color: '#facc15', opacity: 0.55 },
 };
 

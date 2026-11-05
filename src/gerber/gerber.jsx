@@ -643,7 +643,6 @@ function LayerManagerModal({ show, onClose }) {
 
     // Helper to get layer(s) in a slot
     const getLayers = (side, type) => tempLayers.filter(l => l.side === side && l.type === type && l.enabled !== false);
-    const getLayer = (side, type) => getLayers(side, type)[0];
 
     const getUnassigned = () => {
         const assignedIds = new Set();
