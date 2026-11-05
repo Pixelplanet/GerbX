@@ -652,8 +652,12 @@ function LayerManagerModal({ show, onClose }) {
             { side: 'all', type: 'drill' }
         ];
 
+        // Mirror what DroppableSlot renders: every file for multi-file slots, only the first otherwise,
+        // so surplus files in a single-file slot stay reachable under Unassigned.
         slotDefinitions.forEach(def => {
-            getLayers(def.side, def.type).forEach(layer => assignedIds.add(layer.id));
+            const inSlot = getLayers(def.side, def.type);
+            const shown = MULTI_SLOTS.has(`${def.side}-${def.type}`) ? inSlot : inSlot.slice(0, 1);
+            shown.forEach(layer => assignedIds.add(layer.id));
         });
 
         return tempLayers.filter(l => !assignedIds.has(l.id));
