@@ -16,6 +16,9 @@ import { DndContext, useDraggable, useDroppable, DragOverlay, closestCenter } fr
 import { CSS } from '@dnd-kit/utilities';
 
 
+// Layer Manager slots that may hold more than one file (boards often ship separate PTH and NPTH drill files).
+const MULTI_SLOTS = new Set(['all-drill']);
+
 function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -611,9 +614,8 @@ function LayerManagerModal({ show, onClose }) {
             return l;
         });
 
-        // Ensure only one layer per slot (except Unassigned)?
-        // If we drop into a slot that already has a layer, we should probably swap them or push the old one to unassigned?
-        if (targetContainer !== 'unassigned') {
+        // Single-layer slots evict their previous occupant to Unassigned; multi-layer slots (drills) just accumulate.
+        if (targetContainer !== 'unassigned' && !MULTI_SLOTS.has(targetContainer)) {
             const [side, type] = targetContainer.split('-');
             const currentLayerInSlot = tempLayers.find(l =>
                 l.enabled !== false && l.side === side && l.type === type && l.id !== layerId
@@ -633,8 +635,9 @@ function LayerManagerModal({ show, onClose }) {
         setTempLayers(updated);
     };
 
-    // Helper to get layer in a slot
-    const getLayer = (side, type) => tempLayers.find(l => l.side === side && l.type === type && l.enabled !== false);
+    // Helper to get layer(s) in a slot
+    const getLayers = (side, type) => tempLayers.filter(l => l.side === side && l.type === type && l.enabled !== false);
+    const getLayer = (side, type) => getLayers(side, type)[0];
 
     const getUnassigned = () => {
         const assignedIds = new Set();
@@ -650,8 +653,7 @@ function LayerManagerModal({ show, onClose }) {
         ];
 
         slotDefinitions.forEach(def => {
-            const layer = getLayer(def.side, def.type);
-            if (layer) assignedIds.add(layer.id);
+            getLayers(def.side, def.type).forEach(layer => assignedIds.add(layer.id));
         });
 
         return tempLayers.filter(l => !assignedIds.has(l.id));
@@ -687,13 +689,13 @@ function LayerManagerModal({ show, onClose }) {
     // Droppable Slot Component
     const DroppableSlot = ({ id, label, side, type }) => {
         const { setNodeRef, isOver } = useDroppable({ id });
-        const layer = getLayer(side, type);
+        const slotLayers = MULTI_SLOTS.has(id) ? getLayers(side, type) : getLayers(side, type).slice(0, 1);
 
         return (
             <div ref={setNodeRef} className={`p-2 rounded-lg border-2 border-dashed transition-colors min-h-[60px] flex flex-col justify-center ${isOver ? 'border-blue-500 bg-gray-750' : 'border-gray-600 bg-gray-800'}`}>
                 <span className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">{label}</span>
-                {layer ? (
-                    <DraggableLayer layer={layer} />
+                {slotLayers.length > 0 ? (
+                    slotLayers.map(l => <DraggableLayer key={l.id} layer={l} />)
                 ) : (
                     <div className="flex-1 flex items-center justify-center text-gray-600 text-[10px] italic">
                         Empty
@@ -767,7 +769,7 @@ function LayerManagerModal({ show, onClose }) {
                                 <h3 className="text-sm font-semibold text-gray-300 border-b border-gray-700 pb-2 mb-2">General / Board</h3>
                                 <div className="grid grid-cols-2 gap-3">
                                     <DroppableSlot id="all-outline" side="all" type="outline" label="Edge Cuts / Outline" />
-                                    <DroppableSlot id="all-drill" side="all" type="drill" label="Drill Holes" />
+                                    <DroppableSlot id="all-drill" side="all" type="drill" label="Drill Holes (PTH / NPTH, several files allowed)" />
                                 </div>
                             </div>
                         </div>
