@@ -9,13 +9,34 @@ import JSZip from "jszip";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faRotateRight, faDownload, faFileExport } from "@fortawesome/free-solid-svg-icons";
 import { XCSGenerator } from "./XCSGenerator.js";
+import { buildExportLayers, boardBounds, typesFromToggles } from "./exportPipeline.js";
+import { buildSvgDocument, ringsToPathData } from "./svgExport.js";
+import { renderPng } from "./pngExport.js";
 import { DndContext, useDraggable, useDroppable, DragOverlay, closestCenter } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 
 
+function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const XCS_SETTINGS = {
+    copper: { speed: 50, power: 80, passes: 1 },
+    soldermask: { speed: 150, power: 15, passes: 1 },
+    silkscreen: { speed: 200, power: 10, passes: 1 },
+    outline: { speed: 20, power: 100, passes: 2 },
+};
+
 export default function GerberSection() {
     const [isAnimating, setIsAnimating] = useState(false);
-    const { mainSvg, pngUrls, setPngUrls } = useGerberConfig();
+    const { mainSvg, pngUrls, setPngUrls, layers, isToggled, bottomstack, canvasBg } = useGerberConfig();
     const [active, setActive] = useState(false);
     const [showLayerManager, setShowLayerManager] = useState(false);
     const resultRef = useRef(null);
@@ -119,94 +140,64 @@ export default function GerberSection() {
     }
 
 
+    // Exports are built from resolved geometry (mm, unioned polygons), not from the preview DOM.
+    const buildExportJob = () => {
+        if (!mainSvg.svg || !layers || layers.length === 0) return null;
+        const side = bottomstack.svg && mainSvg.svg === bottomstack.svg ? 'bottom' : 'top';
+        const exportLayers = buildExportLayers(layers, { side, types: typesFromToggles(isToggled, side) });
+        if (exportLayers.length === 0) return null;
+        return { side, mirror: side === 'bottom', exportLayers, bounds: boardBounds(layers) };
+    };
+
     const exportToXCS = () => {
-        if (!mainSvg.svg) return;
+        const job = buildExportJob();
+        if (!job) { alert("No layers found to export!"); return; }
 
-        const layers = [];
-
-        const extractPaths = (element) => {
-            const paths = [];
-            element.querySelectorAll('path').forEach(p => {
-                paths.push(p.getAttribute('d'));
-            });
-            return paths;
-        };
-
-        const { fullLayers, stackConfig } = useGerberConfig();
-        const sourceSvg = fullLayers || mainSvg.svg;
-
-        if (!sourceSvg) return;
-
-        sourceSvg.querySelectorAll('g').forEach(g => {
-            const id = g.getAttribute('id');
-            const style = g.getAttribute('style') || '';
-
-            if (!id || !id.startsWith('g-')) return;
-
-            let color = '#000000';
-            const colorMatch = style.match(/color:\s*([^;]+)/);
-            if (colorMatch) color = colorMatch[1].trim();
-
-            const colorMap = {
-                'crimson': '#DC143C', 'green': '#008000', 'red': '#FF0000', 'blue': '#0000FF',
-                'orange': '#FFA500', 'purple': '#800080', 'black': '#000000', 'white': '#FFFFFF'
-            };
-            if (colorMap[color]) color = colorMap[color];
-
-            const paths = extractPaths(g);
-            if (paths.length > 0) {
-                let speed = 100;
-                let power = 20;
-                let passes = 1;
-
-                if (id.includes('copper')) { speed = 50; power = 80; }
-                else if (id.includes('mask')) { speed = 150; power = 15; }
-                else if (id.includes('silk')) { speed = 200; power = 10; }
-                else if (id.includes('outline')) { speed = 20; power = 100; passes = 2; }
-
-                layers.push({
-                    name: id.replace('g-', ''),
-                    visible: true,
-                    color: color,
-                    paths: paths,
-                    speed, power, passes,
-                    lpi: 200, isCrossHatch: false
-                });
-            }
-        });
-
-        if (layers.length === 0) {
-            alert("No layers found to export!");
-            return;
-        }
+        const [minX, minY, maxX, maxY] = job.bounds;
+        const mapPoint = ([x, y]) => [job.mirror ? maxX - x : x - minX, maxY - y];
+        const xcsLayers = job.exportLayers
+            .map(layer => ({
+                name: layer.id,
+                visible: true,
+                color: layer.color,
+                paths: [ringsToPathData(layer.fills, mapPoint)],
+                ...(XCS_SETTINGS[layer.type] || { speed: 100, power: 20, passes: 1 }),
+                lpi: 200,
+                isCrossHatch: false,
+            }))
+            .filter(layer => layer.paths[0].length > 0);
 
         const generator = new XCSGenerator({ activeDevice: 'f2_ultra_uv' });
-        const { width, height } = stackConfig || { width: 100, height: 100 };
-
-        const xcsContent = generator.generate(null, layers, { width, height });
-
-        const blob = new Blob([xcsContent], { type: 'application/octet-stream' });
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', 'gerber_export.xcs');
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        const xcsContent = generator.generate(null, xcsLayers, { width: maxX - minX, height: maxY - minY });
+        downloadBlob(new Blob([xcsContent], { type: 'application/octet-stream' }), `gerbx_${job.side}.xcs`);
     }
 
     const exportToSVG = () => {
-        if (!mainSvg.svg) return;
-        const serializer = new XMLSerializer();
-        const source = serializer.serializeToString(mainSvg.svg);
-        const blob = new Blob([source], { type: "image/svg+xml;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `${mainSvg.id || "gerber_export"}.svg`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        const job = buildExportJob();
+        if (!job) { alert("No layers found to export!"); return; }
+        const { svg } = buildSvgDocument(job.exportLayers, { bounds: job.bounds, mirror: job.mirror });
+        downloadBlob(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }), `gerbx_${job.side}.svg`);
+    };
+
+    const exportToPNG = async (dpi) => {
+        const job = buildExportJob();
+        if (!job) { alert("No layers found to export!"); return; }
+        const background = canvasBg === 'black' ? '#000000' : '#ffffff';
+        const foreground = canvasBg === 'black' ? '#ffffff' : '#000000';
+        const monoLayers = job.exportLayers.map(layer => ({
+            ...layer,
+            color: layer.type === 'drill' ? background : foreground,
+            opacity: 1,
+        }));
+        try {
+            const result = await renderPng(monoLayers, { dpi, bounds: job.bounds, mirror: job.mirror, background });
+            const url = URL.createObjectURL(result.blob);
+            const name = `gerbx_${job.side}_${job.exportLayers.map(l => l.type).join('-')}`;
+            setPngUrls(prev => [...prev, { name, url, dpi: Math.round(result.dpi) }]);
+        } catch (e) {
+            console.error('PNG export failed', e);
+            alert('PNG export failed: ' + e.message);
+        }
     };
 
     const transitionStyle = {
@@ -252,6 +243,7 @@ export default function GerberSection() {
                     setPngUrls={setPngUrls}
                     downloadZip={downloadZip}
                     exportToXCS={exportToXCS}
+                    exportToPNG={exportToPNG}
                     exportToSVG={exportToSVG}
                     pngRef={pngRef}
                 />
@@ -262,7 +254,13 @@ export default function GerberSection() {
     )
 }
 
-function RightSidebar({ active, pngUrls, setPngUrls, downloadZip, exportToXCS, exportToSVG, pngRef }) {
+function RightSidebar({ active, pngUrls, setPngUrls, downloadZip, exportToXCS, exportToSVG, exportToPNG, pngRef }) {
+    const [dpi, setDpi] = useState(1000);
+    const [rendering, setRendering] = useState(false);
+    const handleRenderPng = async () => {
+        setRendering(true);
+        try { await exportToPNG(dpi); } finally { setRendering(false); }
+    };
 
     // QuickSetup needs isChecked prop potentially. For now creating local state.
     const [isChecked, setIsChecked] = useState(false);
@@ -279,6 +277,23 @@ function RightSidebar({ active, pngUrls, setPngUrls, downloadZip, exportToXCS, e
 
                 {/* Exports */}
                 <div className="flex flex-col gap-2">
+                    <div className="flex gap-2 items-center">
+                        <select
+                            className="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                            value={dpi}
+                            onChange={(e) => setDpi(Number(e.target.value))}
+                            title="PNG resolution"
+                        >
+                            {[300, 600, 1000, 1200, 2000, 4000].map(v => <option key={v} value={v}>{v} dpi</option>)}
+                        </select>
+                        <button
+                            className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-2 px-3 rounded text-sm transition flex items-center justify-center gap-2"
+                            onClick={handleRenderPng}
+                            disabled={!active || rendering}
+                        >
+                            <FontAwesomeIcon icon={faDownload} /> {rendering ? 'Rendering…' : 'Render PNG'}
+                        </button>
+                    </div>
                     <button className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-3 rounded text-sm transition flex items-center justify-center gap-2" onClick={exportToXCS}>
                         <FontAwesomeIcon icon={faDownload} /> Export XCS
                     </button>
@@ -300,7 +315,7 @@ function RightSidebar({ active, pngUrls, setPngUrls, downloadZip, exportToXCS, e
                         <PngComponent
                             key={index}
                             blobUrl={url.url}
-                            name={`${url.name}_1000dpi.png`}
+                            name={`${url.name}_${url.dpi || 1000}dpi.png`}
                             handleDelete={() => {
                                 setPngUrls((prevState) => {
                                     const newState = [...prevState];

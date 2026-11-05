@@ -1,7 +1,8 @@
 import JSZip from 'jszip';
+import { pcbStackup, gerberToSvg } from './vendor.js';
 
 export default async function convertToSvg(files, setTopStack, setBottomStack, setFullLayers, setMainSvg, setStackConfig, setLayers) {
-    const stackup = await useStackup(files);
+    const stackup = await buildStackup(files);
     if (!stackup) { // Error handled in useStackup or needs rethrow?
         throw new Error("No Gerber files processed");
     }
@@ -27,7 +28,7 @@ export default async function convertToSvg(files, setTopStack, setBottomStack, s
         layers: stackup.layers.filter(l => l.side === 'top' || l.side === 'bottom' || l.side === 'all')
     };
 
-    processStackupResult(filteredStackup, setTopStack, setBottomStack, setFullLayers, setMainSvg, setStackConfig);
+    await processStackupResult(filteredStackup, setTopStack, setBottomStack, setFullLayers, setMainSvg, setStackConfig);
 }
 
 export async function reprocessStackup(layers, setTopStack, setBottomStack, setFullLayers, setMainSvg, setStackConfig) {
@@ -48,14 +49,14 @@ export async function reprocessStackup(layers, setTopStack, setBottomStack, setF
         // Attach raw layers for consistency, though we are using the 'layers' argument for next time
         stackup.layers = inputLayers;
 
-        processStackupResult(stackup, setTopStack, setBottomStack, setFullLayers, setMainSvg, setStackConfig);
+        await processStackupResult(stackup, setTopStack, setBottomStack, setFullLayers, setMainSvg, setStackConfig);
     } catch (e) {
         console.error("Reprocessing failed", e);
         alert("Failed to reprocess layers: " + e.message);
     }
 }
 
-function processStackupResult(stackup, setTopStack, setBottomStack, setFullLayers, setMainSvg, setStackConfig) {
+async function processStackupResult(stackup, setTopStack, setBottomStack, setFullLayers, setMainSvg, setStackConfig) {
     const topxmlDoc = new DOMParser().parseFromString(stackup.top.svg, 'image/svg+xml');
     const topsvg = topxmlDoc.documentElement;
     const bottomxmlDoc = new DOMParser().parseFromString(stackup.bottom.svg, 'image/svg+xml');
@@ -64,7 +65,7 @@ function processStackupResult(stackup, setTopStack, setBottomStack, setFullLayer
     const newTopSvg = modifiedSvg({ svg: topsvg, id: 'toplayer', viewbox: stackup.top.viewBox, width: stackup.top.width, height: stackup.top.height })
     const newBottomSvg = modifiedSvg({ svg: bottomsvg, id: 'bottomlayer', viewbox: stackup.bottom.viewBox, width: stackup.bottom.width, height: stackup.bottom.height })
 
-    const fullStackSvg = useGerberToSvg(stackup.layers, stackup.top)
+    const fullStackSvg = await buildFullLayersSvg(stackup.layers, stackup.top)
     const newFullStackSvg = modifiedSvg({ svg: fullStackSvg, id: 'fullstack', viewbox: stackup.top.viewBox, width: stackup.top.width, height: stackup.top.height })
 
     setStackConfig({
@@ -84,7 +85,7 @@ function processStackupResult(stackup, setTopStack, setBottomStack, setFullLayer
     setMainSvg({ id: 'top_layer', svg: newTopSvg });
 }
 
-async function useStackup(filesList) {
+async function buildStackup(filesList) {
     const layers = await processFiles(filesList);
 
     if (layers.length === 0) {
@@ -132,7 +133,30 @@ async function processFiles(filesList) {
 }
 
 
-function useGerberToSvg(layers, svgData) {
+function gerberToSvgString(gerber) {
+    return new Promise((resolve, reject) => {
+        let svgContent = '';
+        const stream = gerberToSvg(gerber);
+        stream.on('data', (chunk) => { svgContent += chunk; });
+        stream.on('error', reject);
+        stream.on('end', () => resolve(svgContent));
+    });
+}
+
+const LAYER_STYLES = {
+    'top_copper': { color: 'crimson', opacity: 0.8 },
+    'bottom_copper': { color: '#008208', opacity: 0.8 },
+    'all_outline': { color: 'green', opacity: 0.8 },
+    'all_drill': { color: '#555555', opacity: 1 },
+    'top_silkscreen': { color: 'red', opacity: 0.8 },
+    'bottom_silkscreen': { color: 'blue', opacity: 0.8 },
+    'bottom_soldermask': { color: '#757500', opacity: 0.8, display: 'none' },
+    'bottom_solderpaste': { color: 'orange', opacity: 0.8 },
+    'top_solderpaste': { color: '#c362c3', opacity: 0.8 },
+    'top_soldermask': { color: '#af4e5f', opacity: 0.8, display: 'none' },
+};
+
+async function buildFullLayersSvg(layers, svgData) {
     const ids = layers.map(({ side, type }) => `${side}_${type}`);
 
     const svg = svgData.svg;
@@ -149,56 +173,31 @@ function useGerberToSvg(layers, svgData) {
     const fullLayerG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     fullLayerG.setAttribute('transform', gTransform);
 
-    layers.forEach((layer, index) => {
-        // layer.gerber is the string content
-        let svgContent = '';
-
-        // gerberToSvg returns a stream-like object in browser if using the standalone lib?
-        // or effectively we can use the library's function.
-        // references says `gerberToSvg(string | buffer)`
-
+    const layerSvgs = await Promise.all(layers.map(async (layer, index) => {
         try {
-            const gerberToSvgStream = gerberToSvg(layer.gerber);
-
-            gerberToSvgStream.on('data', (chunk) => { svgContent += chunk; });
-
-            gerberToSvgStream.on('end', () => {
-                const parser = new DOMParser();
-                const layerSvgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
-
-                const defElement = layerSvgDoc.querySelector('defs');
-                if (defElement) {
-                    // Unique IDs to avoid collisions?
-                    // For now append as is
-                    fullLayerDef.appendChild(defElement);
-                }
-
-                const gElement = layerSvgDoc.querySelector('g');
-                if (gElement) {
-                    gElement.setAttribute('id', `g-${ids[index]}`);
-                    gElement.removeAttribute('transform');
-
-                    const layerStyle = {
-                        'top_copper': { color: 'crimson', opacity: 0.8 },
-                        'bottom_copper': { color: '#008208', opacity: 0.8 },
-                        'all_outline': { color: 'green', opacity: 0.8 },
-                        'all_drill': { color: '#555555', opacity: 1 },
-                        'top_silkscreen': { color: 'red', opacity: 0.8 },
-                        'bottom_silkscreen': { color: 'blue', opacity: 0.8 },
-                        'bottom_soldermask': { color: '#757500', opacity: 0.8, display: 'none' },
-                        'bottom_solderpaste': { color: 'orange', opacity: 0.8 },
-                        'top_solderpaste': { color: '#c362c3', opacity: 0.8 },
-                        'top_soldermask': { color: '#af4e5f', opacity: 0.8, display: 'none' },
-                    };
-
-                    const styleKey = ids[index];
-                    const style = layerStyle[styleKey] || { color: 'green', opacity: 0.5 };
-                    gElement.setAttribute('style', `color: ${style.color}; opacity: ${style.opacity}; display: ${style.display ? style.display : 'block'}`);
-                    fullLayerG.appendChild(gElement);
-                }
-            });
+            return await gerberToSvgString(layer.gerber);
         } catch (e) {
             console.warn(`Error processing layer ${index}:`, e);
+            return null;
+        }
+    }));
+
+    layerSvgs.forEach((svgContent, index) => {
+        if (!svgContent) return;
+        const layerSvgDoc = new DOMParser().parseFromString(svgContent, 'image/svg+xml');
+
+        const defElement = layerSvgDoc.querySelector('defs');
+        if (defElement) {
+            fullLayerDef.appendChild(defElement);
+        }
+
+        const gElement = layerSvgDoc.querySelector('g');
+        if (gElement) {
+            gElement.setAttribute('id', `g-${ids[index]}`);
+            gElement.removeAttribute('transform');
+            const style = LAYER_STYLES[ids[index]] || { color: 'green', opacity: 0.5 };
+            gElement.setAttribute('style', `color: ${style.color}; opacity: ${style.opacity}; display: ${style.display ? style.display : 'block'}`);
+            fullLayerG.appendChild(gElement);
         }
     });
 

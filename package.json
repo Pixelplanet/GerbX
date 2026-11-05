@@ -17,8 +17,13 @@
     "@fortawesome/free-regular-svg-icons": "^6.5.1",
     "@fortawesome/free-solid-svg-icons": "^6.5.1",
     "@fortawesome/react-fontawesome": "^0.2.0",
+    "@tracespace/parser": "^5.0.0-alpha.0",
+    "@tracespace/plotter": "^5.0.0-alpha.0",
     "changedpi": "^1.0.4",
+    "clipper-lib": "^6.4.2",
+    "gerber-to-svg": "^4.2.8",
     "jszip": "^3.10.1",
+    "pcb-stackup": "^4.2.8",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-zoom-pan-pinch": "^3.4.3"
