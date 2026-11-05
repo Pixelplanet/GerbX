@@ -9,7 +9,7 @@ import JSZip from "jszip";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faRotateRight, faDownload, faFileExport } from "@fortawesome/free-solid-svg-icons";
 import { XCSGenerator } from "./XCSGenerator.js";
-import { buildExportLayers, boardBounds, typesFromToggles } from "./exportPipeline.js";
+import { buildExportLayers, boardBounds, visibleTypesFromPreview } from "./exportPipeline.js";
 import { buildSvgDocument, ringsToPathData } from "./svgExport.js";
 import { renderPng } from "./pngExport.js";
 import { DndContext, useDraggable, useDroppable, DragOverlay, closestCenter } from '@dnd-kit/core';
@@ -36,7 +36,7 @@ const XCS_SETTINGS = {
 
 export default function GerberSection() {
     const [isAnimating, setIsAnimating] = useState(false);
-    const { mainSvg, pngUrls, setPngUrls, layers, isToggled, bottomstack, canvasBg } = useGerberConfig();
+    const { mainSvg, pngUrls, setPngUrls, layers, bottomstack, fullLayers, canvasBg } = useGerberConfig();
     const [active, setActive] = useState(false);
     const [showLayerManager, setShowLayerManager] = useState(false);
     const resultRef = useRef(null);
@@ -141,10 +141,17 @@ export default function GerberSection() {
 
 
     // Exports are built from resolved geometry (mm, unioned polygons), not from the preview DOM.
+    // Which side(s) and layer types are exported follows what the preview currently shows.
     const buildExportJob = () => {
         if (!mainSvg.svg || !layers || layers.length === 0) return null;
-        const side = bottomstack.svg && mainSvg.svg === bottomstack.svg ? 'bottom' : 'top';
-        const exportLayers = buildExportLayers(layers, { side, types: typesFromToggles(isToggled, side) });
+        const isFullStack = fullLayers && mainSvg.svg === fullLayers;
+        const isBottom = bottomstack.svg && mainSvg.svg === bottomstack.svg;
+        const side = isFullStack ? 'full' : isBottom ? 'bottom' : 'top';
+        const sides = isFullStack ? ['top', 'bottom'] : [side];
+        const exportLayers = buildExportLayers(layers, {
+            sides,
+            typesFor: (s) => visibleTypesFromPreview(mainSvg.svg, s),
+        });
         if (exportLayers.length === 0) return null;
         return { side, mirror: side === 'bottom', exportLayers, bounds: boardBounds(layers) };
     };
@@ -184,9 +191,11 @@ export default function GerberSection() {
         if (!job) { alert("No layers found to export!"); return; }
         const background = canvasBg === 'black' ? '#000000' : '#ffffff';
         const foreground = canvasBg === 'black' ? '#ffffff' : '#000000';
+        // Drills knock holes out of the other layers; alone they are drawn as marks.
+        const hasForeground = job.exportLayers.some(layer => layer.type !== 'drill');
         const monoLayers = job.exportLayers.map(layer => ({
             ...layer,
-            color: layer.type === 'drill' ? background : foreground,
+            color: layer.type === 'drill' && hasForeground ? background : foreground,
             opacity: 1,
         }));
         try {
