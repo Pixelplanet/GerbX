@@ -164,9 +164,17 @@ const GHOST_STYLES = {
     silkscreen: { color: '#facc15', opacity: 0.55 },
 };
 
+// Transform chain from a pcb-stackup render's <svg> down to its layer <use>s. The top side has one
+// root `translate(0,-H) scale(1,-1)`; the bottom side nests a mirror `translate(2*minX+W,0) scale(-1,1)`
+// inside it, which the ghost must reproduce or it ends up un-mirrored over the bottom view.
 function rootTransformOf(svgData) {
     const svgDoc = new DOMParser().parseFromString(svgData.svg, 'image/svg+xml');
-    return svgDoc.documentElement.querySelector('svg > g')?.getAttribute('transform') || '';
+    const root = svgDoc.documentElement.querySelector('svg > g');
+    const inner = root?.firstElementChild;
+    return [root, inner]
+        .filter(el => el && el.tagName === 'g' && el.getAttribute('transform'))
+        .map(el => el.getAttribute('transform'))
+        .join(' ');
 }
 
 async function buildFullLayersSvg(layers, svgData, bottomData) {
