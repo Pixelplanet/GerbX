@@ -29,9 +29,11 @@ export const GerberProvider = ({ children }) => {
     const [changeSelect, setChangeSelect] = useState(defaultChangeSelect)
     const [stackConfig, setStackConfig] = useState(defaultStackConfig);
     const [isToggled, setIsToggled] = useState(defaultIsToggled);
+    const [viewSide, setViewSide] = useState('top'); // side the board is viewed from ('top' | 'bottom')
 
     const handleReset = () => {
         setMainSvg(defaultMainSvg);
+        setViewSide('top');
         setTopStack(defaultTopStack);
         setBottomStack(defaultBottomStack);
         setFullLayers(defaultFullLayers);
@@ -64,6 +66,8 @@ export const GerberProvider = ({ children }) => {
                 setBottomStack,
                 fullLayers,
                 setFullLayers,
+                viewSide,
+                setViewSide,
                 layers,
                 setLayers,
                 isToggled,

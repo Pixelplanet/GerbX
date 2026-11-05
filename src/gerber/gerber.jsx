@@ -36,7 +36,7 @@ const XCS_SETTINGS = {
 
 export default function GerberSection() {
     const [isAnimating, setIsAnimating] = useState(false);
-    const { mainSvg, pngUrls, setPngUrls, layers, bottomstack, fullLayers, canvasBg } = useGerberConfig();
+    const { mainSvg, pngUrls, setPngUrls, layers, bottomstack, fullLayers, viewSide, canvasBg } = useGerberConfig();
     const [active, setActive] = useState(false);
     const [showLayerManager, setShowLayerManager] = useState(false);
     const resultRef = useRef(null);
@@ -48,6 +48,14 @@ export default function GerberSection() {
     const shownSvgRef = useRef(null);
     const flipAnimRef = useRef(null);
     const flipTokenRef = useRef(null);
+    const shownViewRef = useRef(null); // { el, side } currently in the DOM
+
+    // Side a preview SVG is seen from. The full stack has no side of its own; it takes the selected one.
+    const sideOf = (el) => {
+        if (bottomstack.svg && el === bottomstack.svg) return 'bottom';
+        if (fullLayers && el === fullLayers) return viewSide;
+        return 'top';
+    };
 
     const fitToView = (svgElement) => {
         const api = transformRef.current;
@@ -73,11 +81,14 @@ export default function GerberSection() {
         const svg = mainSvg.svg;
         if (!host || !svg) return;
 
+        const side = sideOf(svg);
         const mount = (el) => {
+            // The full stack is drawn from the top; seen from the bottom it is mirrored like the bottom stack.
+            el.style.transform = el === fullLayers && side === 'bottom' ? 'scaleX(-1)' : '';
             host.replaceChildren(el);
             shownSvgRef.current = el;
+            shownViewRef.current = { el, side };
         };
-        const viewSide = (el) => (bottomstack.svg && el === bottomstack.svg ? 'bottom' : 'top');
 
         if (flipAnimRef.current) {
             flipAnimRef.current.cancel();
@@ -92,7 +103,8 @@ export default function GerberSection() {
             fitToView(svg);
             return;
         }
-        if (previous === svg) return;
+        const previousSide = shownViewRef.current?.side ?? 'top';
+        if (previous === svg && previousSide === side) return;
 
         // Reprocessed board (Manage / Double Side) with different bounds: refit instead of keeping the old view.
         const sameBounds = ['width', 'height'].every(a => previous.getAttribute(a) === svg.getAttribute(a));
@@ -103,12 +115,12 @@ export default function GerberSection() {
         }
 
         const flipEl = flipRef.current;
-        if (!flipEl || viewSide(previous) === viewSide(svg) || typeof flipEl.animate !== 'function') {
+        if (!flipEl || previousSide === side || typeof flipEl.animate !== 'function') {
             mount(svg);
             return;
         }
 
-        const dir = viewSide(svg) === 'bottom' ? 1 : -1;
+        const dir = side === 'bottom' ? 1 : -1;
         const half = 180;
         const token = {};
         flipTokenRef.current = token;
@@ -124,7 +136,7 @@ export default function GerberSection() {
         setTimeout(() => {
             if (flipTokenRef.current === token) mount(svg);
         }, half);
-    }, [mainSvg, bottomstack])
+    }, [mainSvg, bottomstack, viewSide])
 
 
     const downloadZip = () => {
@@ -156,15 +168,15 @@ export default function GerberSection() {
     const buildExportJob = () => {
         if (!mainSvg.svg || !layers || layers.length === 0) return null;
         const isFullStack = fullLayers && mainSvg.svg === fullLayers;
-        const isBottom = bottomstack.svg && mainSvg.svg === bottomstack.svg;
-        const side = isFullStack ? 'full' : isBottom ? 'bottom' : 'top';
-        const sides = isFullStack ? ['top', 'bottom'] : [side];
+        const seenFrom = sideOf(mainSvg.svg);
+        const side = isFullStack ? (seenFrom === 'bottom' ? 'full-bottom' : 'full') : seenFrom;
+        const sides = isFullStack ? ['top', 'bottom'] : [seenFrom];
         const exportLayers = buildExportLayers(layers, {
             sides,
             typesFor: (s) => visibleTypesFromPreview(mainSvg.svg, s),
         });
         if (exportLayers.length === 0) return null;
-        return { side, mirror: side === 'bottom', exportLayers, bounds: boardBounds(layers) };
+        return { side, mirror: seenFrom === 'bottom', exportLayers, bounds: boardBounds(layers) };
     };
 
     const exportToXCS = () => {
@@ -437,28 +449,40 @@ function SvgColorComponent({ active }) {
 }
 
 function SvgSideComponent({ active, setShowLayerManager }) {
-    const { topstack, bottomstack, fullLayers, mainSvg, setMainSvg, setChangeSelect } = useGerberConfig();
+    const { topstack, bottomstack, fullLayers, mainSvg, setMainSvg, viewSide, setViewSide, setChangeSelect } = useGerberConfig();
+    const fullStackOn = !!fullLayers && mainSvg.svg === fullLayers;
+    // Quick Setup can select a stack directly, so derive the shown side from the SVG rather than trusting viewSide alone.
+    const shownSide = mainSvg.svg === bottomstack.svg ? 'bottom' : fullStackOn ? viewSide : 'top';
+
+    const show = (side, full) => {
+        setChangeSelect('custom-setup');
+        setViewSide(side);
+        if (full) setMainSvg({ id: 'Full Layers', svg: fullLayers });
+        else setMainSvg(side === 'bottom' ? { id: 'bottom_layer', svg: bottomstack.svg } : { id: 'top_layer', svg: topstack.svg });
+    };
+
+    const sideBtn = (side, label) => (
+        <button
+            className={`px-3 py-1 text-sm font-medium rounded transition-colors whitespace-nowrap ${shownSide === side ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+            onClick={() => show(side, fullStackOn)}
+        >
+            {label}
+        </button>
+    );
+
     return (
         <>
             <div className="flex flex-row justify-center gap-2 bg-gray-800 p-2 rounded-lg border border-gray-700 inline-flex flex-nowrap whitespace-nowrap shadow-lg" style={{ pointerEvents: active ? 'auto' : 'none' }}>
-                <button
-                    className={`px-3 py-1 text-sm font-medium rounded transition-colors whitespace-nowrap ${mainSvg.svg === fullLayers ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                    onClick={() => { setChangeSelect('custom-setup'); setMainSvg({ id: 'Full Layers', svg: fullLayers }) }}
-                >
-                    Full Stack
-                </button>
+                {sideBtn('top', 'Top')}
+                {sideBtn('bottom', 'Bottom')}
                 <div className="w-px bg-gray-600 mx-1 flex-shrink-0"></div>
                 <button
-                    className={`px-3 py-1 text-sm font-medium rounded transition-colors whitespace-nowrap ${mainSvg.svg === topstack.svg ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                    onClick={() => { setChangeSelect('custom-setup'); setMainSvg({ id: 'top_layer', svg: topstack.svg }) }}
+                    className={`px-3 py-1 text-sm font-medium rounded transition-colors whitespace-nowrap ${fullStackOn ? 'bg-emerald-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                    onClick={() => show(shownSide, !fullStackOn)}
+                    title={fullStackOn ? 'Show only the selected side' : 'Overlay all layers, seen from the selected side'}
+                    aria-pressed={fullStackOn}
                 >
-                    Top
-                </button>
-                <button
-                    className={`px-3 py-1 text-sm font-medium rounded transition-colors whitespace-nowrap ${mainSvg.svg === bottomstack.svg ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                    onClick={() => { setChangeSelect('custom-setup'); setMainSvg({ id: 'bottom_layer', svg: bottomstack.svg }) }}
-                >
-                    Bottom
+                    Full Stack
                 </button>
                 <div className="w-px bg-gray-600 mx-1 flex-shrink-0"></div>
                 <button
