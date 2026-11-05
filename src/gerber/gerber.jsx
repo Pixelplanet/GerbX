@@ -94,6 +94,14 @@ export default function GerberSection() {
         }
         if (previous === svg) return;
 
+        // Reprocessed board (Manage / Double Side) with different bounds: refit instead of keeping the old view.
+        const sameBounds = ['width', 'height'].every(a => previous.getAttribute(a) === svg.getAttribute(a));
+        if (!sameBounds) {
+            mount(svg);
+            fitToView(svg);
+            return;
+        }
+
         const flipEl = flipRef.current;
         if (!flipEl || viewSide(previous) === viewSide(svg) || typeof flipEl.animate !== 'function') {
             mount(svg);
