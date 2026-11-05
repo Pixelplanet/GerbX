@@ -1,0 +1,9 @@
+node_modules
+dist
+_OLD
+.git
+.github
+*.md
+*.log
+.vscode
+.idea
