@@ -13,7 +13,7 @@ function umdDefaultExport() {
     name: 'umd-default-export',
     enforce: 'pre',
     transform(code, id) {
-      const normalized = id.replace(/\\/g, '/')
+      const normalized = id.split('?')[0].replace(/\\/g, '/')
       for (const [suffix, global] of Object.entries(UMD_GLOBALS)) {
         if (normalized.endsWith(suffix)) {
           return { code: `${code}\nexport default ${global};`, map: null }

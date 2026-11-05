@@ -47,24 +47,23 @@ export default function GerberSection() {
     const flipRef = useRef(null);
     const shownSvgRef = useRef(null);
     const flipAnimRef = useRef(null);
+    const flipTokenRef = useRef(null);
 
     const fitToView = (svgElement) => {
         const api = transformRef.current;
         const wrapper = api?.instance?.wrapperComponent;
         if (!api || !wrapper) return;
-        let fitScale = 0.85;
-        try {
-            const rect = svgElement.getBoundingClientRect();
-            const svgW = rect.width || parseFloat(svgElement.getAttribute('width'));
-            const svgH = rect.height || parseFloat(svgElement.getAttribute('height'));
-            if (svgW && svgH && wrapper.clientWidth && wrapper.clientHeight) {
-                fitScale = Math.min((wrapper.clientWidth * 0.9) / svgW, (wrapper.clientHeight * 0.9) / svgH);
-            }
-        } catch (e) {
-            console.warn("Auto-zoom calc failed", e);
+        // Preview SVGs carry their size in mm; CSS renders mm at 96 dpi.
+        const toPx = (v) => (String(v).endsWith('mm') ? parseFloat(v) * 96 / 25.4 : parseFloat(v));
+        const svgW = toPx(svgElement.getAttribute('width'));
+        const svgH = toPx(svgElement.getAttribute('height'));
+        const { clientWidth: w, clientHeight: h } = wrapper;
+        if (!(svgW > 0 && svgH > 0 && w > 0 && h > 0)) {
+            api.centerView(0.85, 0);
+            return;
         }
-        api.resetTransform(0);
-        setTimeout(() => api.centerView(fitScale, 200), 50);
+        const scale = Math.min((w * 0.9) / svgW, (h * 0.9) / svgH);
+        api.setTransform((w - svgW * scale) / 2, (h - svgH * scale) / 2, scale, 0);
     };
 
     // Swap the displayed SVG in place. Pan/zoom is only reset for a newly loaded board;
@@ -84,6 +83,7 @@ export default function GerberSection() {
             flipAnimRef.current.cancel();
             flipAnimRef.current = null;
         }
+        flipTokenRef.current = null;
 
         const previous = shownSvgRef.current;
         if (!previous || previous.parentNode !== host) {
@@ -102,21 +102,20 @@ export default function GerberSection() {
 
         const dir = viewSide(svg) === 'bottom' ? 1 : -1;
         const half = 180;
-        const out = flipEl.animate(
-            [{ transform: 'rotateY(0deg)' }, { transform: `rotateY(${dir * 90}deg)` }],
-            { duration: half, easing: 'ease-in', fill: 'forwards' }
+        const token = {};
+        flipTokenRef.current = token;
+        flipAnimRef.current = flipEl.animate(
+            [
+                { transform: 'scaleX(1)', easing: 'ease-in' },
+                { transform: `scaleX(0) skewY(${dir * 4}deg)`, offset: 0.5 },
+                { transform: `scaleX(0) skewY(${-dir * 4}deg)`, offset: 0.5, easing: 'ease-out' },
+                { transform: 'scaleX(1)' },
+            ],
+            { duration: half * 2 }
         );
-        flipAnimRef.current = out;
-        out.onfinish = () => {
-            mount(svg);
-            out.cancel();
-            const back = flipEl.animate(
-                [{ transform: `rotateY(${-dir * 90}deg)` }, { transform: 'rotateY(0deg)' }],
-                { duration: half, easing: 'ease-out' }
-            );
-            flipAnimRef.current = back;
-            back.onfinish = () => { flipAnimRef.current = null; };
-        };
+        setTimeout(() => {
+            if (flipTokenRef.current === token) mount(svg);
+        }, half);
     }, [mainSvg, bottomstack])
 
 
@@ -239,10 +238,10 @@ export default function GerberSection() {
 
                     <TransformWrapper ref={transformRef} initialScale={1} minScale={.05} limitToBounds={false} centerOnInit={true} wheel={{ step: 0.1 }}>
                         <TransformComponent
-                            contentStyle={{ width: 'fit-content', height: 'fit-content', perspective: '2000px' }}
+                            contentStyle={{ width: 'fit-content', height: 'fit-content' }}
                             wrapperStyle={{ width: '100%', height: '100%', overflow: 'hidden' }}
                         >
-                            <div ref={flipRef} className="w-fit h-fit" style={{ transformStyle: 'preserve-3d' }}>
+                            <div ref={flipRef} className="w-fit h-fit">
                                 <div ref={resultRef} style={transitionStyle} className="w-fit h-fit"></div>
                             </div>
                         </TransformComponent>
@@ -366,12 +365,7 @@ function DropAreaComponent(props) {
         // Access the Files From DataTransfer Object if the files are dropped
         const files = e.dataTransfer ? e.dataTransfer.files : e.target.files;
         convertToSvg(files, setTopStack, setBottomStack, setFullLayers, setMainSvg, setStackConfig, setLayers).then(() => {
-            if (e.target.files) {
-                const newInput = document.createElement('input');
-                newInput.multiple = true;
-                newInput.type = 'file';
-                e.target.parentNode.replaceChild(newInput, e.target);
-            }
+            if (e.target.files) e.target.value = '';
 
             props.dropAreaRef.current.style.display = 'none';
             props.resultRef.current.style.display = 'flex';
