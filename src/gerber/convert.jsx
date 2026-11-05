@@ -65,7 +65,7 @@ async function processStackupResult(stackup, setTopStack, setBottomStack, setFul
     const newTopSvg = modifiedSvg({ svg: topsvg, id: 'toplayer', viewbox: stackup.top.viewBox, width: stackup.top.width, height: stackup.top.height })
     const newBottomSvg = modifiedSvg({ svg: bottomsvg, id: 'bottomlayer', viewbox: stackup.bottom.viewBox, width: stackup.bottom.width, height: stackup.bottom.height })
 
-    const fullStackSvg = await buildFullLayersSvg(stackup.layers, stackup.top)
+    const { svg: fullStackSvg, ghosts } = await buildFullLayersSvg(stackup.layers, stackup.top, stackup.bottom)
     const newFullStackSvg = modifiedSvg({ svg: fullStackSvg, id: 'fullstack', viewbox: stackup.top.viewBox, width: stackup.top.width, height: stackup.top.height })
 
     setStackConfig({
@@ -80,8 +80,10 @@ async function processStackupResult(stackup, setTopStack, setBottomStack, setFul
     })
 
     setFullLayers(newFullStackSvg)
-    setTopStack({ id: stackup.id, svg: newTopSvg })
-    setBottomStack({ id: stackup.id, svg: newBottomSvg })
+    // `ghost` is the other side's copper/silkscreen in this side's coordinate frame; the viewer
+    // appends it into the stack SVG while "Full Stack" is on.
+    setTopStack({ id: stackup.id, svg: newTopSvg, ghost: ghosts.top })
+    setBottomStack({ id: stackup.id, svg: newBottomSvg, ghost: ghosts.bottom })
     setMainSvg({ id: 'top_layer', svg: newTopSvg });
 }
 
@@ -156,13 +158,21 @@ const LAYER_STYLES = {
     'top_soldermask': { color: '#af4e5f', opacity: 0.8, display: 'none' },
 };
 
-async function buildFullLayersSvg(layers, svgData) {
+// Translucent colours for the other side's layers when it is ghosted over the current view.
+const GHOST_STYLES = {
+    copper: { color: '#22d3ee', opacity: 0.6 },
+    silkscreen: { color: '#facc15', opacity: 0.55 },
+};
+
+function rootTransformOf(svgData) {
+    const svgDoc = new DOMParser().parseFromString(svgData.svg, 'image/svg+xml');
+    return svgDoc.documentElement.querySelector('svg > g')?.getAttribute('transform') || '';
+}
+
+async function buildFullLayersSvg(layers, svgData, bottomData) {
     const ids = layers.map(({ side, type }) => `${side}_${type}`);
 
-    const svg = svgData.svg;
-    const svgDoc = new DOMParser().parseFromString(svg, 'image/svg+xml');
-    const rootGElement = svgDoc.documentElement.querySelector('svg > g');
-    const gTransform = rootGElement.getAttribute('transform');
+    const gTransform = rootTransformOf(svgData);
 
     const fullLayerSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     for (const [key, value] of Object.entries(svgData.attributes)) {
@@ -204,7 +214,40 @@ async function buildFullLayersSvg(layers, svgData) {
     fullLayerSvg.appendChild(fullLayerDef);
     fullLayerSvg.appendChild(fullLayerG);
 
-    return fullLayerSvg
+    // Ghost of one side, expressed in the root transform of the view it will be overlaid on
+    // (pcb-stackup's bottom view is mirrored, so the top ghost over it mirrors too).
+    const makeGhost = (sideToShow, rootTransform) => {
+        const ns = 'http://www.w3.org/2000/svg';
+        const g = document.createElementNS(ns, 'g');
+        g.setAttribute('id', `ghost_${sideToShow}`);
+        g.setAttribute('transform', rootTransform);
+        g.setAttribute('pointer-events', 'none');
+        const defs = document.createElementNS(ns, 'defs');
+        g.appendChild(defs);
+        layerSvgs.forEach((svgContent, index) => {
+            const layer = layers[index];
+            const style = GHOST_STYLES[layer.type];
+            if (!svgContent || layer.side !== sideToShow || !style) return;
+            const doc = new DOMParser().parseFromString(svgContent, 'image/svg+xml');
+            const defElement = doc.querySelector('defs');
+            if (defElement) defs.appendChild(defElement);
+            const gElement = doc.querySelector('g');
+            if (!gElement) return;
+            gElement.setAttribute('id', `ghost_${ids[index]}`);
+            gElement.removeAttribute('transform');
+            gElement.setAttribute('style', `color: ${style.color}; opacity: ${style.opacity}`);
+            g.appendChild(gElement);
+        });
+        return g;
+    };
+
+    return {
+        svg: fullLayerSvg,
+        ghosts: {
+            top: makeGhost('bottom', gTransform),
+            bottom: makeGhost('top', bottomData ? rootTransformOf(bottomData) : gTransform),
+        },
+    };
 }
 
 
