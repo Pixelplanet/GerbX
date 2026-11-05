@@ -44,76 +44,80 @@ export default function GerberSection() {
     const dropAreaRef = useRef(null);
     const transformRef = useRef(null);
     const containerRef = useRef(null); // Ref for the GridSection wrapper to get dimensions
+    const flipRef = useRef(null);
+    const shownSvgRef = useRef(null);
+    const flipAnimRef = useRef(null);
 
-    // Initial Zoom Issue Fix: Using a small delay and resizing
-    useEffect(() => {
-        if (resultRef.current && mainSvg.svg) {
-            setIsAnimating(true);
-            setTimeout(() => {
-                resultRef.current.innerHTML = '';
-                setTimeout(() => {
-                    resultRef.current.appendChild(mainSvg.svg);
-                    setIsAnimating(false);
-
-                    // Auto-zoom logic
-                    if (transformRef.current && resultRef.current) {
-                        const svgElement = mainSvg.svg;
-                        const wrapper = transformRef.current.instance.wrapperComponent;
-
-                        if (svgElement && wrapper) {
-                            // Get Client Dimensions
-                            const wrapperWidth = wrapper.clientWidth;
-                            const wrapperHeight = wrapper.clientHeight;
-
-                            // Get SVG Dimensions - attributes are usually in mm for gerbers, need bbox or pixel equivalent?
-                            // gerber-to-svg usually sets width/height attributes in mm, e.g. "100mm"
-                            // We need to parse this or get bbox.
-                            // BBox is more reliable for drawn content.
-                            // But since it's appended, we can try getBBox() if it's in the DOM.
-                            // However, getBBox needs it to be rendered.
-
-                            try {
-                                // Simple attribute parsing if bbox fails or as fallback
-                                let svgW = parseFloat(svgElement.getAttribute('width'));
-                                let svgH = parseFloat(svgElement.getAttribute('height'));
-
-                                // If units are mm, we might need conversion if viewer is pixel based?
-                                // Browsers usually treat unitless as pixels. '100mm' -> converted to px by browser.
-                                // Let's rely on clientWidth/Height of the rendered SVG if possible?
-                                // But resultRef is w-fit, so it should take SVG size.
-
-                                const svgRect = svgElement.getBoundingClientRect();
-                                if (svgRect.width && svgRect.height) {
-                                    svgW = svgRect.width;
-                                    svgH = svgRect.height;
-                                }
-
-                                if (svgW && svgH && wrapperWidth && wrapperHeight) {
-                                    const scaleX = (wrapperWidth * 0.9) / svgW;
-                                    const scaleY = (wrapperHeight * 0.9) / svgH;
-                                    const fitScale = Math.min(scaleX, scaleY);
-
-                                    // Reset and Zoom
-                                    transformRef.current.resetTransform();
-                                    setTimeout(() => {
-                                        transformRef.current.centerView(fitScale);
-                                    }, 50);
-                                } else {
-                                    // Fallback
-                                    transformRef.current.resetTransform();
-                                    transformRef.current.centerView(0.85);
-                                }
-                            } catch (e) {
-                                console.warn("Auto-zoom calc failed", e);
-                                transformRef.current.resetTransform();
-                                transformRef.current.centerView(0.85);
-                            }
-                        }
-                    }
-                }, 250);
-            }, 300);
+    const fitToView = (svgElement) => {
+        const api = transformRef.current;
+        const wrapper = api?.instance?.wrapperComponent;
+        if (!api || !wrapper) return;
+        let fitScale = 0.85;
+        try {
+            const rect = svgElement.getBoundingClientRect();
+            const svgW = rect.width || parseFloat(svgElement.getAttribute('width'));
+            const svgH = rect.height || parseFloat(svgElement.getAttribute('height'));
+            if (svgW && svgH && wrapper.clientWidth && wrapper.clientHeight) {
+                fitScale = Math.min((wrapper.clientWidth * 0.9) / svgW, (wrapper.clientHeight * 0.9) / svgH);
+            }
+        } catch (e) {
+            console.warn("Auto-zoom calc failed", e);
         }
-    }, [mainSvg])
+        api.resetTransform(0);
+        setTimeout(() => api.centerView(fitScale, 200), 50);
+    };
+
+    // Swap the displayed SVG in place. Pan/zoom is only reset for a newly loaded board;
+    // changing sides keeps the current view and flips the board when the viewing side changes.
+    useEffect(() => {
+        const host = resultRef.current;
+        const svg = mainSvg.svg;
+        if (!host || !svg) return;
+
+        const mount = (el) => {
+            host.replaceChildren(el);
+            shownSvgRef.current = el;
+        };
+        const viewSide = (el) => (bottomstack.svg && el === bottomstack.svg ? 'bottom' : 'top');
+
+        if (flipAnimRef.current) {
+            flipAnimRef.current.cancel();
+            flipAnimRef.current = null;
+        }
+
+        const previous = shownSvgRef.current;
+        if (!previous || previous.parentNode !== host) {
+            mount(svg);
+            setIsAnimating(false);
+            fitToView(svg);
+            return;
+        }
+        if (previous === svg) return;
+
+        const flipEl = flipRef.current;
+        if (!flipEl || viewSide(previous) === viewSide(svg) || typeof flipEl.animate !== 'function') {
+            mount(svg);
+            return;
+        }
+
+        const dir = viewSide(svg) === 'bottom' ? 1 : -1;
+        const half = 180;
+        const out = flipEl.animate(
+            [{ transform: 'rotateY(0deg)' }, { transform: `rotateY(${dir * 90}deg)` }],
+            { duration: half, easing: 'ease-in', fill: 'forwards' }
+        );
+        flipAnimRef.current = out;
+        out.onfinish = () => {
+            mount(svg);
+            out.cancel();
+            const back = flipEl.animate(
+                [{ transform: `rotateY(${-dir * 90}deg)` }, { transform: 'rotateY(0deg)' }],
+                { duration: half, easing: 'ease-out' }
+            );
+            flipAnimRef.current = back;
+            back.onfinish = () => { flipAnimRef.current = null; };
+        };
+    }, [mainSvg, bottomstack])
 
 
     const downloadZip = () => {
@@ -235,10 +239,12 @@ export default function GerberSection() {
 
                     <TransformWrapper ref={transformRef} initialScale={1} minScale={.05} limitToBounds={false} centerOnInit={true} wheel={{ step: 0.1 }}>
                         <TransformComponent
-                            contentStyle={{ width: 'fit-content', height: 'fit-content' }}
+                            contentStyle={{ width: 'fit-content', height: 'fit-content', perspective: '2000px' }}
                             wrapperStyle={{ width: '100%', height: '100%', overflow: 'hidden' }}
                         >
-                            <div ref={resultRef} style={transitionStyle} className="w-fit h-fit"></div>
+                            <div ref={flipRef} className="w-fit h-fit" style={{ transformStyle: 'preserve-3d' }}>
+                                <div ref={resultRef} style={transitionStyle} className="w-fit h-fit"></div>
+                            </div>
                         </TransformComponent>
                     </TransformWrapper>
 
