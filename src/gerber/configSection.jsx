@@ -469,15 +469,10 @@ function ToggleButton(props) {
     // Let's stick to the visual logic: Eye Open = Visible. Eye Slash = Hidden.
 
     const handleClick = () => {
-        let layerGroups = [];
-
-        if (layerType === 'toplayer') {
-            layerGroups = [topstack.svg.querySelectorAll('g'), fullLayers.querySelectorAll('g')];
-        } else if (layerType === 'bottomlayer') {
-            layerGroups = [bottomstack.svg.querySelectorAll('g'), fullLayers.querySelectorAll('g')];
-        } else {
-            layerGroups = [topstack.svg.querySelectorAll('g'), bottomstack.svg.querySelectorAll('g'), fullLayers.querySelectorAll('g')];
-        }
+        // Group ids are side-prefixed (top_copper, bottom_copper, ...), so search every stack; this also
+        // reaches the other side's ghost groups that "Full Stack" appends into a stack SVG.
+        const ghosts = [topstack.ghost, bottomstack.ghost].filter(Boolean);
+        const layerGroups = [topstack.svg, bottomstack.svg, fullLayers, ...ghosts].filter(Boolean).map(root => root.querySelectorAll('g'));
 
         layerGroups.forEach(layerGroup => {
             layerGroup.forEach(layer => {

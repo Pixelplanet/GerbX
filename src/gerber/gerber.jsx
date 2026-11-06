@@ -16,6 +16,9 @@ import { DndContext, useDraggable, useDroppable, DragOverlay, closestCenter } fr
 import { CSS } from '@dnd-kit/utilities';
 
 
+// Layer Manager slots that may hold more than one file (boards often ship separate PTH and NPTH drill files).
+const MULTI_SLOTS = new Set(['all-drill']);
+
 function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -36,7 +39,7 @@ const XCS_SETTINGS = {
 
 export default function GerberSection() {
     const [isAnimating, setIsAnimating] = useState(false);
-    const { mainSvg, pngUrls, setPngUrls, layers, bottomstack, fullLayers, canvasBg } = useGerberConfig();
+    const { mainSvg, pngUrls, setPngUrls, layers, topstack, bottomstack, fullStack, canvasBg } = useGerberConfig();
     const [active, setActive] = useState(false);
     const [showLayerManager, setShowLayerManager] = useState(false);
     const resultRef = useRef(null);
@@ -48,6 +51,21 @@ export default function GerberSection() {
     const shownSvgRef = useRef(null);
     const flipAnimRef = useRef(null);
     const flipTokenRef = useRef(null);
+    const shownViewRef = useRef(null); // { el, side } currently in the DOM
+
+    const sideOf = (el) => (bottomstack.svg && el === bottomstack.svg ? 'bottom' : 'top');
+
+    // "Full Stack": overlay the other side's copper/silkscreen (stack.ghost, built in convert.jsx)
+    // inside the displayed stack SVG so it is drawn above the normal render.
+    const applyGhost = (shownEl) => {
+        for (const stack of [topstack, bottomstack]) {
+            if (!stack?.svg || !stack.ghost) continue;
+            const inner = stack.svg.querySelector('g[id$="MainG"] > svg');
+            const on = fullStack && stack.svg === shownEl && inner;
+            if (on && stack.ghost.parentNode !== inner) inner.appendChild(stack.ghost);
+            if (!on && stack.ghost.parentNode) stack.ghost.remove();
+        }
+    };
 
     const fitToView = (svgElement) => {
         const api = transformRef.current;
@@ -73,11 +91,13 @@ export default function GerberSection() {
         const svg = mainSvg.svg;
         if (!host || !svg) return;
 
+        const side = sideOf(svg);
         const mount = (el) => {
+            applyGhost(el);
             host.replaceChildren(el);
             shownSvgRef.current = el;
+            shownViewRef.current = { el, side };
         };
-        const viewSide = (el) => (bottomstack.svg && el === bottomstack.svg ? 'bottom' : 'top');
 
         if (flipAnimRef.current) {
             flipAnimRef.current.cancel();
@@ -92,7 +112,11 @@ export default function GerberSection() {
             fitToView(svg);
             return;
         }
-        if (previous === svg) return;
+        const previousSide = shownViewRef.current?.side ?? 'top';
+        if (previous === svg && previousSide === side) {
+            applyGhost(svg); // only the Full Stack toggle changed
+            return;
+        }
 
         // Reprocessed board (Manage / Double Side) with different bounds: refit instead of keeping the old view.
         const sameBounds = ['width', 'height'].every(a => previous.getAttribute(a) === svg.getAttribute(a));
@@ -103,12 +127,12 @@ export default function GerberSection() {
         }
 
         const flipEl = flipRef.current;
-        if (!flipEl || viewSide(previous) === viewSide(svg) || typeof flipEl.animate !== 'function') {
+        if (!flipEl || previousSide === side || typeof flipEl.animate !== 'function') {
             mount(svg);
             return;
         }
 
-        const dir = viewSide(svg) === 'bottom' ? 1 : -1;
+        const dir = side === 'bottom' ? 1 : -1;
         const half = 180;
         const token = {};
         flipTokenRef.current = token;
@@ -124,7 +148,7 @@ export default function GerberSection() {
         setTimeout(() => {
             if (flipTokenRef.current === token) mount(svg);
         }, half);
-    }, [mainSvg, bottomstack])
+    }, [mainSvg, topstack, bottomstack, fullStack])
 
 
     const downloadZip = () => {
@@ -155,16 +179,16 @@ export default function GerberSection() {
     // Which side(s) and layer types are exported follows what the preview currently shows.
     const buildExportJob = () => {
         if (!mainSvg.svg || !layers || layers.length === 0) return null;
-        const isFullStack = fullLayers && mainSvg.svg === fullLayers;
-        const isBottom = bottomstack.svg && mainSvg.svg === bottomstack.svg;
-        const side = isFullStack ? 'full' : isBottom ? 'bottom' : 'top';
-        const sides = isFullStack ? ['top', 'bottom'] : [side];
+        const isFullStack = fullStack;
+        const seenFrom = sideOf(mainSvg.svg);
+        const side = isFullStack ? (seenFrom === 'bottom' ? 'full-bottom' : 'full') : seenFrom;
+        const sides = isFullStack ? ['top', 'bottom'] : [seenFrom];
         const exportLayers = buildExportLayers(layers, {
             sides,
             typesFor: (s) => visibleTypesFromPreview(mainSvg.svg, s),
         });
         if (exportLayers.length === 0) return null;
-        return { side, mirror: side === 'bottom', exportLayers, bounds: boardBounds(layers) };
+        return { side, mirror: seenFrom === 'bottom', exportLayers, bounds: boardBounds(layers) };
     };
 
     const exportToXCS = () => {
@@ -437,28 +461,37 @@ function SvgColorComponent({ active }) {
 }
 
 function SvgSideComponent({ active, setShowLayerManager }) {
-    const { topstack, bottomstack, fullLayers, mainSvg, setMainSvg, setChangeSelect } = useGerberConfig();
+    const { topstack, bottomstack, mainSvg, setMainSvg, fullStack: fullStackOn, setFullStack, setChangeSelect } = useGerberConfig();
+    const shownSide = mainSvg.svg === bottomstack.svg ? 'bottom' : 'top';
+
+    const show = (side, full) => {
+        setChangeSelect('custom-setup');
+        setFullStack(full);
+        setMainSvg(side === 'bottom' ? { id: 'bottom_layer', svg: bottomstack.svg } : { id: 'top_layer', svg: topstack.svg });
+    };
+
+    const sideBtn = (side, label) => (
+        <button
+            className={`px-3 py-1 text-sm font-medium rounded transition-colors whitespace-nowrap ${shownSide === side ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+            onClick={() => show(side, fullStackOn)}
+        >
+            {label}
+        </button>
+    );
+
     return (
         <>
             <div className="flex flex-row justify-center gap-2 bg-gray-800 p-2 rounded-lg border border-gray-700 inline-flex flex-nowrap whitespace-nowrap shadow-lg" style={{ pointerEvents: active ? 'auto' : 'none' }}>
-                <button
-                    className={`px-3 py-1 text-sm font-medium rounded transition-colors whitespace-nowrap ${mainSvg.svg === fullLayers ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                    onClick={() => { setChangeSelect('custom-setup'); setMainSvg({ id: 'Full Layers', svg: fullLayers }) }}
-                >
-                    Full Stack
-                </button>
+                {sideBtn('top', 'Top')}
+                {sideBtn('bottom', 'Bottom')}
                 <div className="w-px bg-gray-600 mx-1 flex-shrink-0"></div>
                 <button
-                    className={`px-3 py-1 text-sm font-medium rounded transition-colors whitespace-nowrap ${mainSvg.svg === topstack.svg ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                    onClick={() => { setChangeSelect('custom-setup'); setMainSvg({ id: 'top_layer', svg: topstack.svg }) }}
+                    className={`px-3 py-1 text-sm font-medium rounded transition-colors whitespace-nowrap ${fullStackOn ? 'bg-emerald-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                    onClick={() => show(shownSide, !fullStackOn)}
+                    title={fullStackOn ? 'Hide the other side' : "Ghost the other side's copper and silkscreen over this view"}
+                    aria-pressed={fullStackOn}
                 >
-                    Top
-                </button>
-                <button
-                    className={`px-3 py-1 text-sm font-medium rounded transition-colors whitespace-nowrap ${mainSvg.svg === bottomstack.svg ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                    onClick={() => { setChangeSelect('custom-setup'); setMainSvg({ id: 'bottom_layer', svg: bottomstack.svg }) }}
-                >
-                    Bottom
+                    Full Stack
                 </button>
                 <div className="w-px bg-gray-600 mx-1 flex-shrink-0"></div>
                 <button
@@ -587,9 +620,8 @@ function LayerManagerModal({ show, onClose }) {
             return l;
         });
 
-        // Ensure only one layer per slot (except Unassigned)?
-        // If we drop into a slot that already has a layer, we should probably swap them or push the old one to unassigned?
-        if (targetContainer !== 'unassigned') {
+        // Single-layer slots evict their previous occupant to Unassigned; multi-layer slots (drills) just accumulate.
+        if (targetContainer !== 'unassigned' && !MULTI_SLOTS.has(targetContainer)) {
             const [side, type] = targetContainer.split('-');
             const currentLayerInSlot = tempLayers.find(l =>
                 l.enabled !== false && l.side === side && l.type === type && l.id !== layerId
@@ -609,8 +641,8 @@ function LayerManagerModal({ show, onClose }) {
         setTempLayers(updated);
     };
 
-    // Helper to get layer in a slot
-    const getLayer = (side, type) => tempLayers.find(l => l.side === side && l.type === type && l.enabled !== false);
+    // Helper to get layer(s) in a slot
+    const getLayers = (side, type) => tempLayers.filter(l => l.side === side && l.type === type && l.enabled !== false);
 
     const getUnassigned = () => {
         const assignedIds = new Set();
@@ -625,9 +657,12 @@ function LayerManagerModal({ show, onClose }) {
             { side: 'all', type: 'drill' }
         ];
 
+        // Mirror what DroppableSlot renders: every file for multi-file slots, only the first otherwise,
+        // so surplus files in a single-file slot stay reachable under Unassigned.
         slotDefinitions.forEach(def => {
-            const layer = getLayer(def.side, def.type);
-            if (layer) assignedIds.add(layer.id);
+            const inSlot = getLayers(def.side, def.type);
+            const shown = MULTI_SLOTS.has(`${def.side}-${def.type}`) ? inSlot : inSlot.slice(0, 1);
+            shown.forEach(layer => assignedIds.add(layer.id));
         });
 
         return tempLayers.filter(l => !assignedIds.has(l.id));
@@ -663,13 +698,13 @@ function LayerManagerModal({ show, onClose }) {
     // Droppable Slot Component
     const DroppableSlot = ({ id, label, side, type }) => {
         const { setNodeRef, isOver } = useDroppable({ id });
-        const layer = getLayer(side, type);
+        const slotLayers = MULTI_SLOTS.has(id) ? getLayers(side, type) : getLayers(side, type).slice(0, 1);
 
         return (
             <div ref={setNodeRef} className={`p-2 rounded-lg border-2 border-dashed transition-colors min-h-[60px] flex flex-col justify-center ${isOver ? 'border-blue-500 bg-gray-750' : 'border-gray-600 bg-gray-800'}`}>
                 <span className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">{label}</span>
-                {layer ? (
-                    <DraggableLayer layer={layer} />
+                {slotLayers.length > 0 ? (
+                    slotLayers.map(l => <DraggableLayer key={l.id} layer={l} />)
                 ) : (
                     <div className="flex-1 flex items-center justify-center text-gray-600 text-[10px] italic">
                         Empty
@@ -743,7 +778,7 @@ function LayerManagerModal({ show, onClose }) {
                                 <h3 className="text-sm font-semibold text-gray-300 border-b border-gray-700 pb-2 mb-2">General / Board</h3>
                                 <div className="grid grid-cols-2 gap-3">
                                     <DroppableSlot id="all-outline" side="all" type="outline" label="Edge Cuts / Outline" />
-                                    <DroppableSlot id="all-drill" side="all" type="drill" label="Drill Holes" />
+                                    <DroppableSlot id="all-drill" side="all" type="drill" label="Drill Holes (PTH / NPTH, several files allowed)" />
                                 </div>
                             </div>
                         </div>

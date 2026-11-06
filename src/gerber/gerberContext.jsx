@@ -29,9 +29,11 @@ export const GerberProvider = ({ children }) => {
     const [changeSelect, setChangeSelect] = useState(defaultChangeSelect)
     const [stackConfig, setStackConfig] = useState(defaultStackConfig);
     const [isToggled, setIsToggled] = useState(defaultIsToggled);
+    const [fullStack, setFullStack] = useState(false); // ghost the other side's layers over the current view
 
     const handleReset = () => {
         setMainSvg(defaultMainSvg);
+        setFullStack(false);
         setTopStack(defaultTopStack);
         setBottomStack(defaultBottomStack);
         setFullLayers(defaultFullLayers);
@@ -64,6 +66,8 @@ export const GerberProvider = ({ children }) => {
                 setBottomStack,
                 fullLayers,
                 setFullLayers,
+                fullStack,
+                setFullStack,
                 layers,
                 setLayers,
                 isToggled,
